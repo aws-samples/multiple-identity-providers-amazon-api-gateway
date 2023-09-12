@@ -1,0 +1,466 @@
+AWSTemplateFormatVersion: 2010-09-09
+Resources:
+  CognitoUserPoolInternal:
+    Type: 'AWS::Cognito::UserPool'
+    Properties:
+      UserPoolName: !Sub ${AWS::StackName}-internal
+      Schema:
+        - AttributeDataType: String
+          Name: Role
+  CognitoUserPoolExternal:
+    Type: 'AWS::Cognito::UserPool'
+    Properties:
+      UserPoolName: !Sub ${AWS::StackName}-external
+      Schema:
+        - AttributeDataType: String
+          Name: Role
+  CognitoUserPoolClientInternal:
+    Type: 'AWS::Cognito::UserPoolClient'
+    Properties:
+      UserPoolId: !Ref CognitoUserPoolInternal
+      ClientName: !Sub ${AWS::StackName}-internal
+      AllowedOAuthFlows:
+        - implicit
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthScopes:
+        - email
+        - openid
+        - profile
+      CallbackURLs:
+        - 'http://localhost'
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      SupportedIdentityProviders:
+        - COGNITO
+  CognitoUserPoolClientExternal:
+    Type: 'AWS::Cognito::UserPoolClient'
+    Properties:
+      ClientName: !Sub ${AWS::StackName}-external
+      UserPoolId: !Ref CognitoUserPoolExternal
+      AllowedOAuthFlows:
+        - implicit
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthScopes:
+        - email
+        - openid
+        - profile
+      CallbackURLs:
+        - 'http://localhost'
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      SupportedIdentityProviders:
+        - COGNITO
+  CognitoUserPoolDomainInternal:
+    Type: 'AWS::Cognito::UserPoolDomain'
+    Properties:
+      # using client id will make the domain unique
+      Domain: !Sub dns-name-${CognitoUserPoolClientInternal}
+      UserPoolId: !Ref CognitoUserPoolInternal
+    DependsOn:
+      - CognitoUserPoolClientInternal
+  CognitoUserPoolDomainExternal:
+    Type: 'AWS::Cognito::UserPoolDomain'
+    Properties:
+      # using client id will make the domain unique
+      Domain: !Sub dns-name-${CognitoUserPoolClientExternal}
+      UserPoolId: !Ref CognitoUserPoolExternal
+    DependsOn:
+      - CognitoUserPoolClientExternal
+  HelperInitCognitoFunction:
+    Type: AWS::Lambda::Function
+    Metadata:
+        cfn_nag:
+          rules_to_suppress:
+          - id: W89
+            reason: "This is sample function which doesn't require VPC access."
+    Properties:
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import os
+          import cfnresponse
+
+          AWS_REGION = os.environ['AWS_REGION']
+
+          def handler(event, context):
+              print('Event: ', event)
+              resource_properties = event['ResourceProperties']
+              client = boto3.client('cognito-idp')
+              user_pool_id = resource_properties['UserPoolId']
+              user_name = resource_properties['CognitoUserName']
+              role = resource_properties['CognitoUserRole']
+              user_password = resource_properties['CognitoUserPassword']
+              response = ''
+              if event['RequestType'] == 'Create':
+                try:
+                  response = client.admin_create_user(
+                    UserPoolId = user_pool_id,
+                    Username= user_name,
+                    UserAttributes = [{
+                        'Name':'custom:Role', 
+                        'Value': role
+                    }],
+                    MessageAction = 'SUPPRESS',
+                    TemporaryPassword=user_password
+                  )
+                  response = client.admin_set_user_password(
+                    UserPoolId = user_pool_id,
+                    Username = user_name,
+                    Password = user_password,
+                    Permanent = True
+                  )
+                except Exception as x:
+                  print('response', x)
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {})
+                else:
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+              elif event['RequestType'] == 'Delete':
+                try:
+                  response = client.admin_delete_user(
+                    UserPoolId = user_pool_id,
+                    Username= user_name
+                  )
+                  print('response', response)
+                except Exception as x:
+                  print('response', x)
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {})
+                else:
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+      Handler: index.handler
+      Role: !GetAtt HelperCognitoLambdaRole.Arn
+      Runtime: python3.9
+      ReservedConcurrentExecutions: 1
+      Timeout: 30
+  HelperInitializeCognitoUserExternal1:
+    Type: Custom::HelperInitCognitoFunction
+    Properties:
+      ServiceToken: !GetAtt HelperInitCognitoFunction.Arn
+      UserPoolId: !Ref CognitoUserPoolExternal
+      CognitoUserName: !Ref ExternalUser1Name
+      CognitoUserPassword: !Ref UserPassword
+      CognitoUserRole: !Ref ExternalUserRole
+  HelperInitializeCognitoUserExternal2:
+    Type: Custom::HelperInitCognitoFunction
+    Properties:
+      ServiceToken: !GetAtt HelperInitCognitoFunction.Arn
+      UserPoolId: !Ref CognitoUserPoolExternal
+      CognitoUserName: !Ref ExternalUser2Name
+      CognitoUserPassword: !Ref UserPassword
+      CognitoUserRole: !Ref ExternalUserRole
+  HelperInitializeCognitoUserInternal1:
+    Type: Custom::HelperInitCognitoFunction
+    Properties:
+      ServiceToken: !GetAtt HelperInitCognitoFunction.Arn
+      UserPoolId: !Ref CognitoUserPoolInternal
+      CognitoUserName: !Ref InternalUser1Name
+      CognitoUserPassword: !Ref UserPassword
+      CognitoUserRole: !Ref InternalUserRole
+  HelperInitializeCognitoUserInternal2:
+    Type: Custom::HelperInitCognitoFunction
+    Properties:
+      ServiceToken: !GetAtt HelperInitCognitoFunction.Arn
+      UserPoolId: !Ref CognitoUserPoolInternal
+      CognitoUserName: !Ref InternalUser2Name
+      CognitoUserPassword: !Ref UserPassword
+      CognitoUserRole: !Ref InternalUserRole
+  HelperCognitoLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: "/"
+      Policies:
+        - PolicyName: helperCognitoLambdaRole
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cognito-idp:Admin*
+                Resource: 
+                  - !GetAtt CognitoUserPoolExternal.Arn
+                  - !GetAtt CognitoUserPoolInternal.Arn
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${AWS::StackName}-HelperInitCognitoFunction-*:*
+  # >>> AVP Store
+  AVPPolicyStore:
+    Type: AWS::VerifiedPermissions::PolicyStore
+    Properties: 
+      ValidationSettings: 
+        Mode: "OFF"
+  AVPInternalPolicy:
+    Type: AWS::VerifiedPermissions::Policy
+    Properties: 
+      PolicyStoreId: !GetAtt AVPPolicyStore.PolicyStoreId
+      Definition: 
+        Static:
+          Description: "Policy defining access for internal users"
+          Statement: |
+            permit (principal in UserGroup::"AllVeterinarians",
+              action == Action::"GET/appointment",
+              resource in UserGroup::"AllVeterinarians")
+              when { principal == resource.Veterinarian};
+  AVPExternalPolicy:
+    Type: AWS::VerifiedPermissions::Policy
+    Properties: 
+      PolicyStoreId: !GetAtt AVPPolicyStore.PolicyStoreId
+      Definition: 
+        Static:
+          Description: "Policy defining access for external client users"
+          Statement: |
+            permit (principal in UserGroup::"AllClients",
+              action == Action::"GET/appointment",
+              resource in UserGroup::"AllClients")
+              when { principal == resource.owner};
+  # >>> API Service
+  ApiServiceIAMRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: LambdaExecutionPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+              - Effect: Allow
+                Action:
+                  - cognito-idp:Admin*
+                Resource: 
+                  - !GetAtt CognitoUserPoolExternal.Arn
+                  - !GetAtt CognitoUserPoolInternal.Arn
+  ApiServiceLambdaFunction:
+    Type: 'AWS::Lambda::Function'
+    Metadata:
+        cfn_nag:
+          rules_to_suppress:
+          - id: W89
+            reason: "Sample function doesn't required VPC access."
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-lambda
+      Runtime: "python3.9"
+      Handler: "lambda.handler"
+      Role: !GetAtt ApiServiceIAMRole.Arn
+      ReservedConcurrentExecutions: 1
+      Code:
+        S3Bucket: !Sub ${AWS::StackName}-${AWS::AccountId}-${AWS::Region}-lambdas
+        S3Key: "pets-clinic-api.zip"
+  ApiServiceLambdaFunctionPermission:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      Action: "lambda:InvokeFunction"
+      FunctionName: !GetAtt ApiServiceLambdaFunction.Arn
+      Principal: "apigateway.amazonaws.com"
+  # <<< API Service
+  # >>> Amazon API gateway
+  ApiGatewayRestApi:
+    Type: 'AWS::ApiGateway::RestApi'
+    Properties:
+      Name: !Sub ${AWS::StackName}-apigateway
+  ApiGatewayResource:
+    Type: 'AWS::ApiGateway::Resource'
+    Properties:
+      RestApiId: !Ref ApiGatewayRestApi
+      ParentId: !GetAtt ApiGatewayRestApi.RootResourceId
+      PathPart: "{api+}"
+  ApiGatewayMethod:
+    Type: 'AWS::ApiGateway::Method'
+    Metadata:
+        cfn_nag:
+          rules_to_suppress:
+          - id: W59
+            reason: "This is sample function which doesn't require AuthorizationType."
+    Properties:
+      HttpMethod: "ANY"
+      ResourceId: !Ref ApiGatewayResource
+      RestApiId: !Ref ApiGatewayRestApi
+      AuthorizationType: CUSTOM
+      AuthorizerId: !Ref ApiGatewayAuthorizer
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: "POST"
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ApiServiceLambdaFunction.Arn}/invocations
+  ApiGatewayDeploymentProtected:
+    Type: AWS::ApiGateway::Deployment
+    Metadata:
+        cfn_nag:
+          rules_to_suppress:
+          - id: W68
+            reason: "This is sample function for blog which doesn't require usageplan."
+          - id: W45
+            reason: "This is sample function for blog which doesn't require AccessLogSetting."
+    Properties:
+      RestApiId: !Ref ApiGatewayRestApi
+      StageName: dev
+      Description: protected api
+    DependsOn:
+      - ApiGatewayMethod
+      - ApiGatewayAuthorizer
+  CustomAuthIAMRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: LambdaExecutionPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+            - Effect: Allow
+              Action:
+                - logs:CreateLogGroup
+                - logs:CreateLogStream
+                - logs:PutLogEvents
+              Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${AWS::StackName}-CustomAuthLambdaFunction-*:*
+            - Effect: Allow
+              Action:
+                - verifiedpermissions:IsAuthorized
+              Resource: '*'
+  CustomAuthLambdaFunction:
+    Type: 'AWS::Lambda::Function'
+    Metadata:
+        cfn_nag:
+          rules_to_suppress:
+          - id: W89
+            reason: "This is sample function which doesn't require VPC access."
+    Properties:
+      Runtime: "python3.9"
+      Handler: "lambda.handler"
+      Role: !GetAtt CustomAuthIAMRole.Arn
+      ReservedConcurrentExecutions: 1
+      Code:
+        S3Bucket: !Sub ${AWS::StackName}-${AWS::AccountId}-${AWS::Region}-lambdas
+        S3Key: "custom-auth.zip"
+      Environment:
+        Variables:
+          AWS_DATA_PATH: "./models"
+          COGNITO_INTERNAL_USER_POOL_ID: !Ref CognitoUserPoolInternal
+          COGNITO_INTERNAL_APP_CLIENT_ID: !Ref CognitoUserPoolClientInternal
+          COGNITO_EXTERNAL_USER_POOL_ID: !Ref CognitoUserPoolExternal
+          COGNITO_EXTERNAL_APP_CLIENT_ID: !Ref CognitoUserPoolClientExternal
+          VERIFIED_PERMISSION_POLICY_STORE_ID: !GetAtt AVPPolicyStore.PolicyStoreId
+  ApiGatewayCustomAuthIAMPolicy:
+    Type: 'AWS::IAM::Policy'
+    Properties:
+      PolicyName: !Sub ${AWS::StackName}-ApiGatewayCustomAuthIAMPolicy
+      Roles:
+        - !Ref ApiGatewayCustomAuthIAMRole
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - 'lambda:InvokeFunction'
+            Resource: !GetAtt CustomAuthLambdaFunction.Arn
+  ApiGatewayCustomAuthIAMRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument: |-
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Principal": {
+                "Service": "apigateway.amazonaws.com"
+              },
+              "Effect": "Allow",
+              "Sid": ""
+            }
+          ]
+        }
+  ApiGatewayAuthorizer:
+    Type: 'AWS::ApiGateway::Authorizer'
+    Properties:
+      Name: custom-auth
+      RestApiId: !Ref ApiGatewayRestApi
+      Type: REQUEST
+      IdentitySource: method.request.header.Authorization
+      AuthorizerResultTtlInSeconds: '300'
+      AuthorizerCredentials: !GetAtt ApiGatewayCustomAuthIAMRole.Arn
+      AuthorizerUri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${CustomAuthLambdaFunction.Arn}/invocations
+# <<< API Gateway authorizer
+ # >>> Inputs
+Parameters:
+  ExternalUserRole:
+    Type: String
+    Default: Client
+    Description: Enter Cognito External Pool username role.
+  ExternalUser1Name:
+    Type: String
+    Default: Dave
+    Description: Enter Cognito External Pool username.
+  ExternalUser2Name:
+    Type: String
+    Default: Joy
+    Description: Enter Cognito External Pool username2.
+  InternalUserRole:
+    Type: String
+    Default: Doctor
+    Description: Enter Cognito Internal Pool username2 role.
+  InternalUser1Name:
+    Type: String
+    Default: Jane
+    Description: Enter Cognito Internal Pool username2.
+  InternalUser2Name:
+    Type: String
+    Default: Adam
+    Description: Enter Cognito Internal Pool username3.
+  UserPassword:
+    Type: String
+    AllowedPattern: '^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9])(?=.*[\^$*.\[\]{}\(\)?\-“!@#%&/,><\’:;|_~`])\S{8,99}$'
+    Description: |-
+      Enter Cognito users password. Password must fulfill User Pool Password Requirements.
+      See documentaton for more details https://docs.aws.amazon.com/cognito/latest/developerguide/user-pool-settings-policies.html
+# >>> Outputs
+Outputs:
+  CognitoUserPoolClientInternal:
+    Value: !Ref CognitoUserPoolClientInternal
+  CognitoUserPoolClientExternal:
+    Value: !Ref CognitoUserPoolClientExternal
+  CognitoHostedUiExternalDomainUrl:
+    Value: !Sub https://${CognitoUserPoolDomainExternal}.auth.${AWS::Region}.amazoncognito.com/login?client_id=${CognitoUserPoolClientExternal}&response_type=token&scope=email+openid+profile&redirect_uri=http://localhost
+  CognitoHostedUiInternalDomainUrl:
+    Value: !Sub https://${CognitoUserPoolDomainInternal}.auth.${AWS::Region}.amazoncognito.com/login?client_id=${CognitoUserPoolClientInternal}&response_type=token&scope=email+openid+profile&redirect_uri=http://localhost
+  ApiGatewayDeploymentUrlApiEndpoint:
+    Value: !Sub https://${ApiGatewayRestApi}.execute-api.${AWS::Region}.amazonaws.com/dev/appointment

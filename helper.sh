@@ -281,7 +281,7 @@ do
       get_api_url
       APPOITMENT_API=$API_URL"/PI-T123"
       echo ""
-      echo "API to check his appointment details of PI-T123"
+      echo "API to check the appointment details of PI-T123"
       echo "URL: $APPOITMENT_API"
       echo "Response: "
       curl "${APPOITMENT_API}"
@@ -289,7 +289,7 @@ do
 
       APPOITMENT_API=$API_URL"/PI-T124"
       echo ""
-      echo "API to check his appointment details of PI-T124"
+      echo "API to check the appointment details of PI-T124"
       echo "URL: $APPOITMENT_API"
       echo "Response: "
       curl "${APPOITMENT_API}"
@@ -297,7 +297,7 @@ do
 
       APPOITMENT_API=$API_URL"/PI-T125"
       echo ""
-      echo "API to check his appointment details of PI-T125"
+      echo "API to check the appointment details of PI-T125"
       echo "URL: $APPOITMENT_API"
       echo "Response: "
       curl "${APPOITMENT_API}"
@@ -307,7 +307,7 @@ do
       get_api_url
       APPOITMENT_API=$API_URL"/PI-T123"
       echo ""
-      echo "API to check his appointment details of PI-T123 with invalid token"
+      echo "API to check the appointment details of PI-T123 with invalid token"
       curl -s -H "Authorization: Bearer aGVhZGVy.Y2xhaW1z.c2lnbmF0dXJl" "${APPOITMENT_API}"
       echo ""
       ;;
